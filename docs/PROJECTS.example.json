@@ -1,0 +1,17 @@
+{
+  "default_project": "teamtask-pilot",
+  "projects": {
+    "teamtask-pilot": {
+      "team_id": "<team-id>",
+      "repository": "<repository-url>",
+      "wiki_ids": ["<wiki-id>"],
+      "code_graph_ids": ["<code-graph-id>"],
+      "decisions_wiki_id": "<wiki-id>",
+      "shared_agent_id": "<shared-agent-id>",
+      "max_context_tokens": 8000
+    },
+    "another-project": {
+      "team_id": "<another-team-id>"
+    }
+  }
+}
