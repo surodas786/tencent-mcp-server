@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "tencentdb-memory": {
+      "type": "http",
+      "url": "http://<adapter-host>:8787/mcp",
+      "headers": {
+        "X-TencentDB-User-Key": "<TENCENTDB_USER_KEY>",
+        "X-TencentDB-User-Id": "<TENCENTDB_USER_ID>",
+        "X-TencentDB-Agent-Id": "<TENCENTDB_AGENT_ID>"
+      }
+    }
+  }
+}

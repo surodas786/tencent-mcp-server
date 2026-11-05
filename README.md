@@ -29,6 +29,39 @@ Claude Code configuration:
 
 After a rebuild, restart Claude Code or reconnect with `/mcp`. Add `docs/CLAUDE.snippet.md` to each project's `CLAUDE.md`.
 
+## Remote adapter over HTTP
+
+The adapter can run on one remote host and serve every developer over HTTP. Developers then need only an MCP configuration, not a copy of the adapter.
+
+**On the adapter host:**
+
+1. Run `npm install` and `npm run build`.
+2. Fill in `.env` from `.env.example` with the shared settings, and set `TENCENTDB_MCP_TRANSPORT=http`. Leave out the three per-developer values. If they are present, HTTP mode ignores them.
+3. Run `npm start`. The adapter listens on `http://<host>:8787/mcp`.
+
+**On each developer's workstation:**
+
+1. Copy `mcp-client/mcp.json` to where the MCP client reads it. For Claude Code, that is `.mcp.json` in the project root.
+2. Replace `<adapter-host>` and the three identity values.
+3. Don't commit the filled-in file, because it holds the developer's key.
+
+**To change the TencentDB user,** edit the three headers and reconnect with `/mcp`. Nothing changes on the adapter host, and it doesn't need a restart.
+
+| Header | Replaces |
+|---|---|
+| `X-TencentDB-User-Key` | `TENCENTDB_USER_KEY` |
+| `X-TencentDB-User-Id` | `TENCENTDB_USER_ID` |
+| `X-TencentDB-Agent-Id` | `TENCENTDB_AGENT_ID` |
+
+How it behaves:
+
+- **All three headers are required on every request.** There is no fallback to values in the server's `.env`.
+- **Each session is isolated,** with its own client, identity and context cache. A session can't be used with different identity headers.
+- **The usual checks still apply.** The Panel verifies the key on first use, and admin keys and mismatched user IDs are refused.
+- **HTTP mode needs `panel` access.** The adapter won't start with `TENCENTDB_MEMORY_ACCESS=core`, because Core trusts the user ID it is given.
+- **Team and project settings are shared.** They come from the server's `.env`, so developers in another team need `TENCENTDB_PROJECTS_FILE` or a separate adapter.
+- **Sessions are held in memory.** They end after 12 idle hours or when the adapter restarts, and the client must then reconnect.
+
 ## Services and authentication
 
 | Service | URL | Credential | Who is checked |
@@ -44,16 +77,16 @@ Consequences for the design:
 - **Identity comes from configuration.** No tool accepts a different user or team identity.
 - **Admin keys are refused.** Before the first call to the Panel or MemoryCore, the adapter resolves the key's owner and refuses `system_admin` keys and keys that don't match `TENCENTDB_USER_ID`.
 - **Failures stay visible.** A failed team search is an error and never falls back to agent scope.
-- **Keys are redacted** from all tool output. The adapter writes no logs.
+- **Keys are redacted** from all tool output. The adapter writes no logs, apart from one startup line in HTTP mode.
 
 ## Environment variables
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `TENCENTDB_PANEL_URL` | Yes | MemoryPanel |
-| `TENCENTDB_USER_KEY` | Yes | This developer's key |
-| `TENCENTDB_AGENT_ID` | Yes | This developer's agent |
-| `TENCENTDB_USER_ID` | Yes | Real user ID (`usr-...`), from `npm run whoami` |
+| `TENCENTDB_USER_KEY` | stdio only | This developer's key |
+| `TENCENTDB_AGENT_ID` | stdio only | This developer's agent |
+| `TENCENTDB_USER_ID` | stdio only | Real user ID (`usr-...`), from `npm run whoami` |
 | `TENCENTDB_TEAM_ID` | Yes | Default team |
 | `TENCENTDB_SERVICE_ID` | No | Instance, default `default` |
 | `TENCENTDB_KNOWLEDGE_URL` | For code entity tools | MemoryKnowledge |
@@ -65,6 +98,9 @@ Consequences for the design:
 | `TENCENTDB_CONTEXT_CACHE_SECONDS` | No | Default 300, 0 disables |
 | `TENCENTDB_MEMORY_ACCESS` | No | `panel` when a Panel URL is set, otherwise `core` |
 | `TENCENTDB_MEMORY_URL`, `TENCENTDB_API_KEY` | For `core` access only | MemoryCore and its shared token. `TENCENTDB_URL` is still accepted |
+| `TENCENTDB_MCP_TRANSPORT` | No | `stdio` (default) or `http` |
+| `TENCENTDB_MCP_HOST` | No | HTTP listen address, default `0.0.0.0` |
+| `TENCENTDB_MCP_PORT` | No | HTTP listen port, default `8787` |
 
 ## Projects
 
@@ -171,7 +207,7 @@ Memory Core holds 8 L1 records and 20 L0 messages for DEV1 under the literal use
 | MemoryCore trusts identity headers | **Open, server-side.** A developer key was accepted as its Bearer token, so it isn't limited to a shared secret, and identity headers aren't checked. Restrict port 8420, and configure the gateway's API key |
 | MemoryKnowledge read routes need no credential | **Open, server-side.** Anyone on the network can read wikis and call code tools. Restrict port 8424 to the Panel and approved hosts, or add per-user auth |
 | Agent memory visibility is per block | **By design.** Team-visible blocks expose all of that agent's memory |
-| Traffic is plain HTTP | **Open.** Keys cross the network unencrypted. Use TLS or a VPN |
+| Traffic is plain HTTP | **Open.** Keys cross the network unencrypted, including on every request from an MCP client to a remote adapter. Use TLS or a VPN |
 
 ## Limitations
 
