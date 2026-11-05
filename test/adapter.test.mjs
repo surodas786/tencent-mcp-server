@@ -3,8 +3,11 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
+import { spawn } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const TEAM = "team-test";
 const DEV1_BLOCK = `chat_memory-${TEAM}-agt-dev1`;
@@ -545,5 +548,82 @@ test("an empty package says so instead of looking like success", async () => {
   const { json } = await call(client, "get_development_context", { task_description: "zzzzqqqq" });
   assert.equal(json.statistics.results_selected, 0);
   assert.ok(json.warnings.some((w) => w.includes("No relevant context")));
+  await client.close();
+});
+
+async function startHttpAdapter() {
+  const port = await new Promise((done) => {
+    const probe = net.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => done(port));
+    });
+  });
+  const child = spawn(process.execPath, ["dist/index.js"], {
+    env: {
+      PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+      TENCENTDB_MCP_TRANSPORT: "http", TENCENTDB_MCP_HOST: "127.0.0.1", TENCENTDB_MCP_PORT: String(port),
+      TENCENTDB_PANEL_URL: baseUrl, TENCENTDB_KNOWLEDGE_URL: baseUrl, TENCENTDB_SERVICE_ID: "default",
+      TENCENTDB_MEMORY_ACCESS: "", TENCENTDB_PROJECT_ID: "", TENCENTDB_PROJECTS_FILE: "", TENCENTDB_SHARED_AGENT_ID: "",
+      // Stale server values, which must never reach a client.
+      TENCENTDB_TEAM_ID: "team-server", TENCENTDB_DECISIONS_WIKI_ID: "wiki-server",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  await new Promise((done, fail) => {
+    child.stderr.on("data", (d) => String(d).includes("listening") && done());
+    child.once("exit", (code) => fail(new Error(`adapter exited with ${code}`)));
+  });
+  return { url: `http://127.0.0.1:${port}/mcp`, stop: () => child.kill() };
+}
+const httpHeaders = { "X-TencentDB-User-Key": DEV_KEY, "X-TencentDB-User-Id": "usr-dev2", "X-TencentDB-Agent-Id": "agt-dev2", "X-TencentDB-Team-Id": "team-header" };
+async function connectHttp(url, headers) {
+  const client = new Client({ name: "test", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
+  clients.push(client);
+  return client;
+}
+
+test("over HTTP the team and decisions wiki come from headers, not the server's env", async (t) => {
+  const adapter = await startHttpAdapter();
+  t.after(adapter.stop);
+  const client = await connectHttp(adapter.url, { ...httpHeaders, "X-TencentDB-Decisions-Wiki-Id": "wiki-header" });
+  calls.length = 0;
+  const { json } = await call(client, "save_development_decision", { ...decision, scope: "team_shared" });
+  const write = calls.find((c) => c.path === "/api/v1/knowledge/wiki/raw/write");
+  assert.equal(write.body.team_id, "team-header");
+  assert.equal(write.body.wiki_id, "wiki-header");
+  assert.equal(json.wiki_id, "wiki-header");
+  await client.close();
+});
+
+test("over HTTP a client without the wiki header can't inherit the server's wiki", async (t) => {
+  const adapter = await startHttpAdapter();
+  t.after(adapter.stop);
+  const client = await connectHttp(adapter.url, httpHeaders);
+  calls.length = 0;
+  const { isError, text } = await call(client, "save_development_decision", { ...decision, scope: "team_shared" });
+  assert.equal(isError, true);
+  assert.match(text, /X-TencentDB-Decisions-Wiki-Id/);
+  assert.ok(!calls.some((c) => c.path === "/api/v1/knowledge/wiki/raw/write"));
+  await client.close();
+});
+
+test("over HTTP the team header is required, and a session can't change project", async (t) => {
+  const adapter = await startHttpAdapter();
+  t.after(adapter.stop);
+  const post = (headers) => fetch(adapter.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...headers },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  const { "X-TencentDB-Team-Id": _team, ...noTeam } = httpHeaders;
+  const missing = await post(noTeam);
+  assert.equal(missing.status, 400);
+  assert.match(await missing.text(), /x-tencentdb-team-id/);
+
+  const client = await connectHttp(adapter.url, { ...httpHeaders, "X-TencentDB-Decisions-Wiki-Id": "wiki-a" });
+  const sessionId = client.transport.sessionId;
+  assert.equal((await post({ ...httpHeaders, "Mcp-Session-Id": sessionId, "X-TencentDB-Team-Id": "team-other", "X-TencentDB-Decisions-Wiki-Id": "wiki-a" })).status, 403);
+  assert.equal((await post({ ...httpHeaders, "Mcp-Session-Id": sessionId, "X-TencentDB-Decisions-Wiki-Id": "wiki-b" })).status, 403);
   await client.close();
 });

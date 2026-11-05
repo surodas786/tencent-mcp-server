@@ -1,7 +1,7 @@
 // Streamable HTTP transport, for running the adapter on a remote host.
 // The server's .env holds what is shared. Each MCP client sends its own user key,
-// user ID and agent ID as headers, and each session gets its own server and Client,
-// the same isolation a developer's stdio process has.
+// user ID, agent ID, team and decisions wiki as headers, and each session gets its own
+// server and Client, the same isolation a developer's stdio process has.
 
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -20,6 +20,12 @@ const IDENTITY_HEADERS = {
   TENCENTDB_USER_KEY: "x-tencentdb-user-key",
   TENCENTDB_USER_ID: "x-tencentdb-user-id",
   TENCENTDB_AGENT_ID: "x-tencentdb-agent-id",
+  TENCENTDB_TEAM_ID: "x-tencentdb-team-id",
+};
+
+// Only team_shared saves need these, so a client may leave them out.
+const OPTIONAL_HEADERS = {
+  TENCENTDB_DECISIONS_WIKI_ID: "x-tencentdb-decisions-wiki-id",
 };
 
 type Identity = Record<string, string>;
@@ -31,19 +37,28 @@ interface Session {
   lastSeen: number;
 }
 
+function headerValue(req: IncomingMessage, header: string): string {
+  const value = req.headers[header];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function readIdentity(req: IncomingMessage): { identity: Identity; missing: string[] } {
   const identity: Identity = {};
   const missing: string[] = [];
   for (const [name, header] of Object.entries(IDENTITY_HEADERS)) {
-    const value = req.headers[header];
-    if (typeof value === "string" && value.trim()) identity[name] = value.trim();
+    const value = headerValue(req, header);
+    if (value) identity[name] = value;
     else missing.push(header);
+  }
+  // Empty rather than absent, so a value left in the server's .env can't reach this client.
+  for (const [name, header] of Object.entries(OPTIONAL_HEADERS)) {
+    identity[name] = headerValue(req, header);
   }
   return { identity, missing };
 }
 
 const sameIdentity = (a: Identity, b: Identity) =>
-  Object.keys(IDENTITY_HEADERS).every((name) => a[name] === b[name]);
+  [...Object.keys(IDENTITY_HEADERS), ...Object.keys(OPTIONAL_HEADERS)].every((name) => a[name] === b[name]);
 
 function sendError(res: ServerResponse, status: number, message: string): void {
   res.writeHead(status, { "Content-Type": "application/json" });

@@ -6,7 +6,9 @@
       "headers": {
         "X-TencentDB-User-Key": "<TENCENTDB_USER_KEY>",
         "X-TencentDB-User-Id": "<TENCENTDB_USER_ID>",
-        "X-TencentDB-Agent-Id": "<TENCENTDB_AGENT_ID>"
+        "X-TencentDB-Agent-Id": "<TENCENTDB_AGENT_ID>",
+        "X-TencentDB-Team-Id": "<TENCENTDB_TEAM_ID>",
+        "X-TencentDB-Decisions-Wiki-Id": "<TENCENTDB_DECISIONS_WIKI_ID>"
       }
     }
   }

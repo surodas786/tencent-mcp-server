@@ -108,7 +108,7 @@ export class KnowledgeCapture {
     async publish(project, input, body, prefix, ingest) {
         const wikiId = project.decisions_wiki_id;
         if (!wikiId) {
-            throw new Error("Not saved: set TENCENTDB_DECISIONS_WIKI_ID or the project's decisions_wiki_id to publish to the team.");
+            throw new Error("Not saved: set X-TencentDB-Decisions-Wiki-Id in mcp.json (TENCENTDB_DECISIONS_WIKI_ID over stdio) or the project's decisions_wiki_id to publish to the team.");
         }
         const filename = `${prefix}-${new Date().toISOString().slice(0, 10)}-${slug(input.title)}.md`;
         await this.client.panel("/knowledge/wiki/raw/write", {

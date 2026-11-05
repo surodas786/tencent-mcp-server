@@ -21,7 +21,8 @@ const { values } = parseArgs({
 const { query, symbol } = values;
 
 const client = new Client({ name: "live-check", version: "1" });
-await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"] }));
+// The whole environment, because the team and decisions wiki aren't in .env: set them in the shell.
+await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], env: process.env }));
 
 let failures = 0;
 let empties = 0;

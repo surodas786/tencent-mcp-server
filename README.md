@@ -11,17 +11,22 @@ npm install
 copy .env.example .env     # then fill it in
 npm run whoami             # confirms the key is yours, and shows your real user ID
 npm test                   # build and mock tests; never contacts the live server
+$env:TENCENTDB_TEAM_ID = "<team-id>"
 npm run live-check         # read-only live check
 ```
 
-Claude Code configuration:
+Claude Code configuration, in each project's `.mcp.json`. The team and decisions wiki vary by project, so they are set here and not in `.env`:
 
 ```json
 {
   "mcpServers": {
     "tencentdb-memory": {
       "command": "node",
-      "args": ["E:\\tencentdb-mcp-adapter\\dist\\index.js"]
+      "args": ["E:\\tencentdb-mcp-adapter\\dist\\index.js"],
+      "env": {
+        "TENCENTDB_TEAM_ID": "<team-id>",
+        "TENCENTDB_DECISIONS_WIKI_ID": "<wiki-id>"
+      }
     }
   }
 }
@@ -36,30 +41,32 @@ The adapter can run on one remote host and serve every developer over HTTP. Deve
 **On the adapter host:**
 
 1. Run `npm install` and `npm run build`.
-2. Fill in `.env` from `.env.example` with the shared settings, and set `TENCENTDB_MCP_TRANSPORT=http`. Leave out the three per-developer values. If they are present, HTTP mode ignores them.
+2. Fill in `.env` from `.env.example` with the shared settings, and set `TENCENTDB_MCP_TRANSPORT=http`. Leave out the per-developer values and the team and decisions wiki. If they are present, HTTP mode ignores them.
 3. Run `npm start`. The adapter listens on `http://<host>:8787/mcp`.
 
 **On each developer's workstation:**
 
 1. Copy `mcp-client/mcp.json` to where the MCP client reads it. For Claude Code, that is `.mcp.json` in the project root.
-2. Replace `<adapter-host>` and the three identity values.
+2. Replace `<adapter-host>`, the three identity values, and the project's team and decisions wiki.
 3. Don't commit the filled-in file, because it holds the developer's key.
 
-**To change the TencentDB user,** edit the three headers and reconnect with `/mcp`. Nothing changes on the adapter host, and it doesn't need a restart.
+**To change the TencentDB user or project,** edit the headers and reconnect with `/mcp`. Nothing changes on the adapter host, and it doesn't need a restart.
 
-| Header | Replaces |
-|---|---|
-| `X-TencentDB-User-Key` | `TENCENTDB_USER_KEY` |
-| `X-TencentDB-User-Id` | `TENCENTDB_USER_ID` |
-| `X-TencentDB-Agent-Id` | `TENCENTDB_AGENT_ID` |
+| Header | Replaces | Required |
+|---|---|---|
+| `X-TencentDB-User-Key` | `TENCENTDB_USER_KEY` | Yes |
+| `X-TencentDB-User-Id` | `TENCENTDB_USER_ID` | Yes |
+| `X-TencentDB-Agent-Id` | `TENCENTDB_AGENT_ID` | Yes |
+| `X-TencentDB-Team-Id` | `TENCENTDB_TEAM_ID` | Yes |
+| `X-TencentDB-Decisions-Wiki-Id` | `TENCENTDB_DECISIONS_WIKI_ID` | For `team_shared` saves |
 
 How it behaves:
 
-- **All three headers are required on every request.** There is no fallback to values in the server's `.env`.
+- **Headers are sent on every request.** There is no fallback to values in the server's `.env`, even for the optional decisions wiki header.
 - **Each session is isolated,** with its own client, identity and context cache. A session can't be used with different identity headers.
 - **The usual checks still apply.** The Panel verifies the key on first use, and admin keys and mismatched user IDs are refused.
 - **HTTP mode needs `panel` access.** The adapter won't start with `TENCENTDB_MEMORY_ACCESS=core`, because Core trusts the user ID it is given.
-- **Team and project settings are shared.** They come from the server's `.env`, so developers in another team need `TENCENTDB_PROJECTS_FILE` or a separate adapter.
+- **The team and decisions wiki are per project.** One adapter serves any number of teams. The Panel still decides what the key may read. If `TENCENTDB_PROJECTS_FILE` is set on the host, a profile's `team_id` and `decisions_wiki_id` take precedence over these headers.
 - **Sessions are held in memory.** They end after 12 idle hours or when the adapter restarts, and the client must then reconnect.
 
 ## Services and authentication
@@ -87,12 +94,12 @@ Consequences for the design:
 | `TENCENTDB_USER_KEY` | stdio only | This developer's key |
 | `TENCENTDB_AGENT_ID` | stdio only | This developer's agent |
 | `TENCENTDB_USER_ID` | stdio only | Real user ID (`usr-...`), from `npm run whoami` |
-| `TENCENTDB_TEAM_ID` | Yes | Default team |
+| `TENCENTDB_TEAM_ID` | stdio only | Team for this project. Set it in the MCP configuration's `env`, not `.env` |
 | `TENCENTDB_SERVICE_ID` | No | Instance, default `default` |
 | `TENCENTDB_KNOWLEDGE_URL` | For code entity tools | MemoryKnowledge |
 | `TENCENTDB_PROJECT_ID` | No | Active project name |
 | `TENCENTDB_PROJECTS_FILE` | No | Project profiles, see below |
-| `TENCENTDB_DECISIONS_WIKI_ID` | For `team_shared` saves | Team decisions wiki |
+| `TENCENTDB_DECISIONS_WIKI_ID` | stdio, for `team_shared` saves | This project's decisions wiki. Set it in the MCP configuration's `env`, not `.env` |
 | `TENCENTDB_SHARED_AGENT_ID` | No | Labels the shared engineering agent's knowledge |
 | `TENCENTDB_MAX_CONTEXT_TOKENS` | No | Default budget, 8000 |
 | `TENCENTDB_CONTEXT_CACHE_SECONDS` | No | Default 300, 0 disables |
@@ -104,7 +111,7 @@ Consequences for the design:
 
 ## Projects
 
-TencentDB has no project entity, so a project is an adapter-side profile mapping a name to a team and its assets. Profiles narrow what is searched; they grant nothing. For several projects, set `TENCENTDB_PROJECTS_FILE` to a file like `docs/PROJECTS.example.json`. Otherwise one profile is built from the environment.
+TencentDB has no project entity, so a project is an adapter-side profile mapping a name to a team and its assets. Profiles narrow what is searched; they grant nothing. For several projects, set `TENCENTDB_PROJECTS_FILE` to a file like `docs/PROJECTS.example.json`. Otherwise one profile is built from the MCP configuration and the environment.
 
 ## Tools
 
@@ -162,8 +169,8 @@ No source changes are needed.
 2. The developer clones the adapter and runs `npm install`.
 3. They fill in `.env` from `.env.example`, using their own key and agent.
 4. `npm run whoami` shows their real user ID. Set `TENCENTDB_USER_ID` to it.
-5. They add the MCP configuration and restart Claude Code.
-6. `npm run live-check` verifies access to shared knowledge.
+5. They add the MCP configuration, with the project's team and decisions wiki, and restart Claude Code.
+6. With `TENCENTDB_TEAM_ID` set in the shell, `npm run live-check` verifies access to shared knowledge.
 7. `npm run live-check -- --private-block <id>` verifies another developer's private block is denied.
 
 ## Shared engineering agent
